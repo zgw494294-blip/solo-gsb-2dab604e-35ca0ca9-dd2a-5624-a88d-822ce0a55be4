@@ -98,3 +98,16 @@ class SolveResponse(BaseModel):
 
     satisfiable: bool
     selected: dict[str, int]
+
+
+class ConflictsResponse(BaseModel):
+    """Result of POST /conflicts."""
+
+    satisfiable: bool
+    # Package names of a minimum unsatisfiable root subset; empty when the
+    # original roots are jointly satisfiable.
+    conflict_roots: list[str]
+    # One entry per conflict root: what solving with that root removed (using
+    # only the other conflict roots) selects. Empty mapping overall when the
+    # request is satisfiable; a root whose removal leaves no roots maps to {}.
+    witnesses: dict[str, dict[str, int]]

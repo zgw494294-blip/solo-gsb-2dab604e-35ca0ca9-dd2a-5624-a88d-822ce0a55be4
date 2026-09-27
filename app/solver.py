@@ -20,6 +20,8 @@ Semantics
 
 from __future__ import annotations
 
+from itertools import combinations
+
 # catalog: package name -> {version number -> {dependency name -> (low, high)}}
 Catalog = dict[str, dict[int, dict[str, tuple[int, int]]]]
 # roots: package name -> (low, high)
@@ -122,3 +124,23 @@ def solve(catalog: Catalog, roots: Roots) -> dict[str, int] | None:
 
     backtrack()
     return best_selection
+
+
+def minimum_conflict_roots(catalog: Catalog, roots: Roots) -> list[str]:
+    """Return the minimum unsatisfiable subset of the root names.
+
+    Caller guarantees ``solve(catalog, roots)`` is unsatisfiable, so at
+    least the full root set is an answer. Subsets are tried in increasing
+    cardinality; within one size, ``itertools.combinations`` yields them in
+    lexicographic order of their position tuples, which for a sorted input
+    list is the lexicographic order of the package-name tuples. The first
+    unsatisfiable combination therefore has the fewest members and, on a
+    cardinality tie, the lexicographically smallest package-name vector.
+    """
+    names = sorted(roots)
+    for size in range(1, len(names) + 1):
+        for combo in combinations(names, size):
+            subset = {name: roots[name] for name in combo}
+            if solve(catalog, subset) is None:
+                return list(combo)
+    raise AssertionError("roots were guaranteed unsatisfiable")

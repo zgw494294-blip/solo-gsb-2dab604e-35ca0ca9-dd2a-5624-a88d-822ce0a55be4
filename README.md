@@ -5,6 +5,7 @@
 
 - 服务端口：**8000**
 - 求解接口：`POST /solve`
+- 冲突定位接口：`POST /conflicts`
 - 健康检查：`GET /health`
 - 交互式文档（服务启动后）：<http://localhost:8000/docs>
 
@@ -72,7 +73,52 @@ docker compose down         # 停止并移除
 { "satisfiable": false, "selected": {} }
 ```
 
-## 三、请求示例
+## 三、`POST /conflicts`：定位最小冲突根集合
+
+请求体与 `POST /solve` **完全相同**（同样的 `catalog`、`roots`、同样的校验规则，
+非法输入同样返回 **HTTP 422**），离线求解语义也一致。响应字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `satisfiable` | 原请求（全部根约束）是否可满足。 |
+| `conflict_roots` | 可满足时为 `[]`；无解时为基数最小的无解药根子集的包名（按字典序排列）。并列时取包名向量字典序最小者。 |
+| `witnesses` | 可满足时为 `{}`；无解时对冲突组内每个根，以其包名为键，给出**移除该根、仅用组内其余根**求解得到的 `selected`（沿用 `/solve` 的版本向量择优规则）；组内只剩该根（移除后无根）时为 `{}`。 |
+
+即：每个 witness 都是「删掉这个根冲突就消失」的证据，且求解时只考虑冲突组内的其余根，
+不使用组外的根。
+
+### 响应
+
+可满足：
+
+```json
+{ "satisfiable": true, "conflict_roots": [], "witnesses": {} }
+```
+
+无解（两个根互相冲突；删掉任一个后，只靠另一个根都能解出相应选择）：
+
+```json
+{
+  "satisfiable": false,
+  "conflict_roots": ["a", "c"],
+  "witnesses": {
+    "a": {"b": 2, "c": 1},
+    "c": {"a": 1, "b": 1}
+  }
+}
+```
+
+无解且最小冲突集合只有一个根（该根自身无解；移除后无剩余根，witness 为 `{}`）：
+
+```json
+{
+  "satisfiable": false,
+  "conflict_roots": ["app"],
+  "witnesses": {"app": {}}
+}
+```
+
+## 四、请求示例
 
 ### 示例 1：基本求解（含传递依赖、多解择优）
 
@@ -157,15 +203,70 @@ curl -i http://localhost:8000/solve \
 
 返回 `HTTP/1.1 422 Unprocessable Entity`，响应体说明具体校验错误。
 
-## 四、实现说明
+### 示例 5：`/conflicts` 定位两个根的冲突（含 witnesses）
+
+`a` 选中的版本要求 `b` 恰好为 1，`c` 选中的版本要求 `b` 恰好为 2，
+两个根各自可满足、放在一起无解，最小冲突组就是 `["a", "c"]`：
+
+```bash
+curl -s http://localhost:8000/conflicts \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "catalog": {
+      "a": [{"version": 1, "dependencies": {"b": [1, 1]}}],
+      "b": [
+        {"version": 1, "dependencies": {}},
+        {"version": 2, "dependencies": {}}
+      ],
+      "c": [{"version": 1, "dependencies": {"b": [2, 2]}}]
+    },
+    "roots": {"a": [1, 1], "c": [1, 1]}
+  }'
+```
+
+响应（每个 witness 只保留冲突组内的另一个根，并按版本向量规则择优）：
+
+```json
+{
+  "satisfiable": false,
+  "conflict_roots": ["a", "c"],
+  "witnesses": {
+    "a": {"b": 2, "c": 1},
+    "c": {"a": 1, "b": 1}
+  }
+}
+```
+
+### 示例 6：`/conflicts` 原请求可满足
+
+```bash
+curl -s http://localhost:8000/conflicts \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "catalog": {"app": [{"version": 1}, {"version": 2}]},
+    "roots": {"app": [1, 2]}
+  }'
+```
+
+响应：
+
+```json
+{"satisfiable": true, "conflict_roots": [], "witnesses": {}}
+```
+
+## 五、实现说明
 
 - `app/schemas.py`：基于 Pydantic 的请求模型与全部输入校验（失败由 FastAPI 转为 422）。
+  `/solve` 与 `/conflicts` 共用同一请求模型 `SolveRequest`。
 - `app/solver.py`：回溯求解器。维护已选版本、累积区间约束和可达包集合，
   发现冲突即回溯换版；版本降序尝试并配合乐观上界做分支限界，
-  找到字典序最大解后快速剪枝。
-- `app/main.py`：FastAPI 应用与 `/solve`、`/health` 路由。
+  找到字典序最大解后快速剪枝。`minimum_conflict_roots` 按基数从小到大、
+  同基数按包名字典序枚举根的非空子集（对有序输入使用
+  `itertools.combinations`），第一个无解子集即最小冲突组；witnesses
+  复用同一 `solve`，因此天然继承版本向量择优语义。
+- `app/main.py`：FastAPI 应用与 `/solve`、`/conflicts`、`/health` 路由。
 
-## 五、本地开发与测试（不使用 Docker）
+## 六、本地开发与测试（不使用 Docker）
 
 ```bash
 python3 -m venv .venv
