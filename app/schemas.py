@@ -98,3 +98,17 @@ class SolveResponse(BaseModel):
 
     satisfiable: bool
     selected: dict[str, int]
+
+
+class ConflictsResponse(BaseModel):
+    """Result of a conflict-analysis attempt.
+
+    When the request is satisfiable both ``conflict_roots`` and
+    ``witnesses`` are empty. Otherwise ``conflict_roots`` is the
+    minimum-cardinality unsatisfiable root subset and ``witnesses`` maps
+    each of its members to the selection obtained without that member.
+    """
+
+    satisfiable: bool
+    conflict_roots: list[str]
+    witnesses: dict[str, dict[str, int]]

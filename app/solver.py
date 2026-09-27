@@ -20,6 +20,8 @@ Semantics
 
 from __future__ import annotations
 
+import itertools
+
 # catalog: package name -> {version number -> {dependency name -> (low, high)}}
 Catalog = dict[str, dict[int, dict[str, tuple[int, int]]]]
 # roots: package name -> (low, high)
@@ -122,3 +124,52 @@ def solve(catalog: Catalog, roots: Roots) -> dict[str, int] | None:
 
     backtrack()
     return best_selection
+
+
+def find_minimal_conflict(
+    catalog: Catalog, roots: Roots
+) -> tuple[list[str], dict[str, dict[str, int]]] | None:
+    """Explain an unsatisfiable request, or return ``None`` if it is solvable.
+
+    The result is a pair ``(conflict_roots, witnesses)``:
+
+    * ``conflict_roots`` -- a minimum-cardinality subset of the root package
+      names that is unsatisfiable on its own. Ties are broken by choosing the
+      lexicographically smallest sorted name list. The names are returned
+      sorted ascending.
+    * ``witnesses`` -- for every name in ``conflict_roots``, the ``selected``
+      mapping obtained by solving with only the *remaining* roots of the
+      subset (same lexicographic-maximum rule as :func:`solve`). Minimality
+      guarantees each such sub-problem is satisfiable. When no roots remain
+      (singleton conflict) the witness is the empty mapping.
+    """
+    if solve(catalog, roots) is not None:
+        return None
+
+    names = sorted(roots)
+    conflict: tuple[str, ...] | None = None
+    # Subsets are enumerated by increasing size, and combinations over the
+    # sorted names are yielded in lexicographic order, so the first
+    # unsatisfiable subset found is exactly the required answer.
+    for size in range(1, len(names) + 1):
+        for combo in itertools.combinations(names, size):
+            if solve(catalog, {name: roots[name] for name in combo}) is None:
+                conflict = combo
+                break
+        if conflict is not None:
+            break
+
+    # The full root set is unsatisfiable, so some subset must be too.
+    assert conflict is not None
+
+    witnesses: dict[str, dict[str, int]] = {}
+    for name in conflict:
+        remaining = {other: roots[other] for other in conflict if other != name}
+        if not remaining:
+            witnesses[name] = {}
+        else:
+            selected = solve(catalog, remaining)
+            # `conflict` is minimal, so dropping any member is satisfiable.
+            assert selected is not None
+            witnesses[name] = selected
+    return list(conflict), witnesses
